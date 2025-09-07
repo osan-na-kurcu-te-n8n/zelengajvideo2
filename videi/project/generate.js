@@ -1,7 +1,5 @@
 // generate.js
-// Compose a soccer lineup by duplicating a reusable "player object" (GIF + name-box + drawtext)
-// Requirements: ffmpeg on PATH (Linux), Node.js 16+
-// Assets expected relative to project root; adjust as needed.
+// Lineup with timed entrances and fade-in on GIF, name-box, and text
 
 const { spawn } = require('node:child_process');
 const path = require('node:path');
@@ -16,6 +14,15 @@ const config = {
   pixFmt: 'yuv420p',
   crf: '18',
   preset: 'medium',
+
+  offsetX: 600,
+
+  // Scale overlays (preserve aspect by width)
+  gifScale: { w: 160, h: -1, flags: 'lanczos' },
+
+  // Fade duration in seconds for all elements
+  fadeDur: 0.6, // FADE duration [9]
+
   textStyle: {
     fontcolor: 'white',
     fontsize: 36,
@@ -25,25 +32,24 @@ const config = {
   }
 };
 
-// Example lineup with per-player GIFs (set gifPath for each)
+// Timed lineup groups: 0s GK, 2s back four, 4s mids, 6s forwards
 const lineup = [
-  { name: 'GK Name',  x: 640,  y: 900, gifPath: 'assets/gifs/gk.gif' },
-  { name: 'LB Name',  x: 260,  y: 760, gifPath: 'assets/gifs/lb.gif' },
-  { name: 'LCB Name', x: 480,  y: 780, gifPath: 'assets/gifs/lcb.gif' },
-  { name: 'RCB Name', x: 800,  y: 780, gifPath: 'assets/gifs/rcb.gif' },
-  { name: 'RB Name',  x: 1020, y: 760, gifPath: 'assets/gifs/rb.gif' },
-  { name: 'LCM Name', x: 460,  y: 600, gifPath: 'assets/gifs/lcm.gif' },
-  { name: 'CM Name',  x: 640,  y: 560, gifPath: 'assets/gifs/cm.gif' },
-  { name: 'RCM Name', x: 820,  y: 600, gifPath: 'assets/gifs/rcm.gif' },
-  { name: 'LW Name',  x: 360,  y: 360, gifPath: 'assets/gifs/lw.gif' },
-  { name: 'ST Name',  x: 640,  y: 300, gifPath: 'assets/gifs/st.gif' },
-  { name: 'RW Name',  x: 920,  y: 360, gifPath: 'assets/gifs/rw.gif' },
+  { key: 'gk',  name: 'GK Name',  x: 640,  y: 900, gifPath: 'assets/gifs/gk.gif',  startTime: 0 },
+  { key: 'lb',  name: 'LB Name',  x: 260,  y: 760, gifPath: 'assets/gifs/lb.gif',  startTime: 2 },
+  { key: 'lcb', name: 'LCB Name', x: 480,  y: 780, gifPath: 'assets/gifs/lcb.gif', startTime: 2 },
+  { key: 'rcb', name: 'RCB Name', x: 800,  y: 780, gifPath: 'assets/gifs/rcb.gif', startTime: 2 },
+  { key: 'rb',  name: 'RB Name',  x: 1020, y: 760, gifPath: 'assets/gifs/rb.gif',  startTime: 2 },
+  { key: 'lcm', name: 'LCM Name', x: 460,  y: 600, gifPath: 'assets/gifs/lcm.gif', startTime: 4 },
+  { key: 'cm',  name: 'CM Name',  x: 640,  y: 560, gifPath: 'assets/gifs/cm.gif',  startTime: 4 },
+  { key: 'rcm', name: 'RCM Name', x: 820,  y: 600, gifPath: 'assets/gifs/rcm.gif', startTime: 4 },
+  { key: 'lw',  name: 'LW Name',  x: 360,  y: 360, gifPath: 'assets/gifs/lw.gif',  startTime: 6 },
+  { key: 'st',  name: 'ST Name',  x: 640,  y: 300, gifPath: 'assets/gifs/st.gif',  startTime: 6 },
+  { key: 'rw',  name: 'RW Name',  x: 920,  y: 360, gifPath: 'assets/gifs/rw.gif',  startTime: 6 },
 ];
 
-// Ensure output folder exists
 fs.mkdirSync(path.dirname(config.outFile), { recursive: true });
 
-// Minimal escaping for drawtext text in filtergraph context
+// Escape drawtext text for filtergraph
 function escapeDrawtextText(t) {
   return String(t)
     .replace(/\\/g, '\\\\')
@@ -55,35 +61,57 @@ function escapeDrawtextText(t) {
     .replace(/;/g, '\\;');
 }
 
-// Build filter_complex dynamically
+// Build filter_complex with scaling, timed enables, and alpha fades
 function buildFilterGraph(players) {
   const prelabels = [];
-  // For i-th player, name box input index = 1 + i*2, gif input index = 2 + i*2
-  players.forEach((_, i) => {
+  players.forEach((p, i) => {
     const boxIn = 1 + i * 2;
     const gifIn = 2 + i * 2;
-    // Normalize to RGBA so overlay blends alpha correctly
-    prelabels.push(`[${boxIn}:v]format=rgba[box${i}]`);
-    prelabels.push(`[${gifIn}:v]format=rgba[gif${i}]`);
+
+    // Name-box: RGBA then fade-in alpha starting at p.startTime
+    // Use a minor chain label [box{i}f] for faded box
+    prelabels.push(
+      `[${boxIn}:v]format=rgba,fade=in:st=${p.startTime}:d=${config.fadeDur}:alpha=1[box${i}f]`
+    ); // FADE on name-box [1][9]
+
+    // GIF: RGBA -> scale -> fade-in alpha starting at p.startTime
+    const { w, h, flags } = config.gifScale;
+    prelabels.push(
+      `[${gifIn}:v]format=rgba,scale=${w}:${h}${flags ? `:flags=${flags}` : ''},` +
+      `fade=in:st=${p.startTime}:d=${config.fadeDur}:alpha=1[gif${i}f]`
+    ); // FADE on GIF [9][2]
   });
 
   const parts = [];
   let videoLabel = '[bgv]';
 
   players.forEach((p, i) => {
-    const boxX = Math.floor(p.x - 100); // adjust based on box width
-    const boxY = Math.floor(p.y + 80);  // under the player GIF
+    const xShift = config.offsetX || 0;
+
+    const boxX = Math.floor(p.x - 100 + xShift);
+    const boxY = Math.floor(p.y + 80);
     const textX = boxX + 10;
     const textY = boxY + 10;
+
     const nameText = escapeDrawtextText(p.name);
     const ts = config.textStyle;
 
-    // Overlay name box
-    parts.push(`${videoLabel}[box${i}]overlay=${boxX}:${boxY}:format=auto[v${i}_box]`);
-    // Draw name on top of the box
-    parts.push(`[v${i}_box]drawtext=fontfile=${config.fontFile}:text='${nameText}':fontcolor=${ts.fontcolor}:fontsize=${ts.fontsize}:shadowcolor=${ts.shadowcolor}:shadowx=${ts.shadowx}:shadowy=${ts.shadowy}:x=${textX}:y=${textY}[v${i}_text]`);
-    // Overlay the player's GIF
-    parts.push(`[v${i}_text][gif${i}]overlay=${p.x}:${p.y}:shortest=1:format=auto[v${i}_gif]`);
+    // Enable from player's start time onward
+    const en = `enable='between(t,${p.startTime},1e9)'`;
+
+    // 1) Overlay faded name-box
+    parts.push(`${videoLabel}[box${i}f]overlay=${boxX}:${boxY}:format=auto:${en}[v${i}_box]`); // [1][2]
+
+    // 2) Drawtext with alpha expression for fade-in synced to startTime
+    const alphaExpr = `alpha='if(lt(t,${p.startTime}),0,if(lt(t,${p.startTime}+${config.fadeDur}),(t-${p.startTime})/${config.fadeDur},1))'`; // FADE text [13]
+    parts.push(
+      `[v${i}_box]drawtext=fontfile=${config.fontFile}:text='${nameText}':fontcolor=${ts.fontcolor}:fontsize=${ts.fontsize}:shadowcolor=${ts.shadowcolor}:shadowx=${ts.shadowx}:shadowy=${ts.shadowy}:x=${textX}:y=${textY}:${alphaExpr}:${en}[v${i}_text]`
+    ); // [13][2]
+
+    // 3) Overlay faded GIF
+    parts.push(
+      `[v${i}_text][gif${i}f]overlay=${p.x + xShift}:${p.y}:shortest=1:format=auto:${en}[v${i}_gif]`
+    ); // [9][2]
 
     videoLabel = `[v${i}_gif]`;
   });
@@ -97,12 +125,11 @@ function buildFilterGraph(players) {
   return { filter, lastVideoLabel: videoLabel };
 }
 
-// Build inputs: background, then for each player: name-box.png, that player's GIF
+// Inputs: background, then for each player: name-box.png, that player's GIF
 function buildInputs(players) {
-  const args = [['-i', config.background]];
+  const args = [['-y'], ['-i', config.background]];
   players.forEach((p) => {
     args.push(['-i', config.nameBoxPng]);
-    // Ensure -ignore_loop 0 precedes the GIF's -i so FFmpeg honors GIF loop metadata
     args.push(['-ignore_loop', '0', '-i', p.gifPath]);
   });
   return args.flat();
@@ -135,7 +162,7 @@ function run(players) {
   });
 }
 
-// Validate input assets
+// Validate inputs
 (function validate() {
   const need = ['background', 'nameBoxPng', 'fontFile'];
   need.forEach((k) => {
