@@ -1,0 +1,4 @@
+Name,X,Y
+Messi,100,200
+Mbappe,300,200
+Neymar,500,200

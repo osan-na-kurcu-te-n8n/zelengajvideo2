@@ -1,58 +1,61 @@
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 
-const videoPath = path.join(__dirname, 'stadium.mp4');
+// Postavljamo putanju za izlaznu video datoteku
+const outputPath = path.join(__dirname, 'final_video.mp4');
 
+// Definiramo ulazne datoteke
 const inputs = [
-  '-i stadium.mp4',
-  '-i players/player1.gif',
-  '-i players/player2.gif',
-  '-i players/player3.gif',
-  '-i players/player4.gif',
-  '-i players/player5.gif',
-  '-i players/player6.gif',
-  '-i players/player7.gif',
-  '-i players/player8.gif',
-  '-i players/player9.gif',
-  '-i players/player10.gif',
-  '-i players/player11.gif'
+  '-i', 'all_board.mp4',     // Pozadinski video
+  '-i', 'kutija.png',        // Slika kutije
+  '-i', 'malaAnimacija.gif', // Mala animacija
+  '-i', 'players/player1.gif', // Animacija igrača
+  '-i', 'okvir.png'          // Okvirna slika
 ];
 
-const outputPath = path.join(__dirname, 'output_halfsize.mp4');
+const filterComplex = `
+  [0:v]format=rgba[bg];
+  [1:v]scale=140:50,format=rgba,setpts=PTS-STARTPTS+1.5/TB[kutija];
+  [bg][kutija]overlay=1080:940:enable='gte(t,1.5)'[tmp1];
+  [2:v]scale=150:50,format=rgba,setpts=PTS-STARTPTS+1/TB[malaAnim];
+  [tmp1][malaAnim]overlay=1070:940:enable='lt(t,4)'[tmp2];
+  [3:v]scale=110:180,format=rgba,setpts=PTS-STARTPTS+2/TB[player];
+  [tmp2][player]overlay=1095:760:enable='gte(t,2)'[tmp3];
+  [4:v]scale=550:750,format=rgba,setpts=PTS-STARTPTS+4/TB[okvir];
+  [tmp3][okvir]overlay=330:190:enable='gte(t,4)'[tmp4];
+  [tmp4]null[v];  // Ovdje više nema komentara
+`;
 
-let filterComplex = '[0:v]format=rgba[bg];';
+// FFmpeg argumenti za spajanje medija
+const ffmpegArgs = [
+  '-y', // Prepisivanje izlazne datoteke ako već postoji
+  ...inputs, // Ulazni mediji
+  '-filter_complex', filterComplex, // Filter za spajanje
+  '-map', '[v]', // Mapiranje izlaza
+  '-c:v', 'libx264', // H.264 kodek za video
+  '-crf', '28', // Kvaliteta videa (manji broj znači bolja kvaliteta)
+  '-preset', 'ultrafast', // Najbrže kodiranje
+  '-pix_fmt', 'yuv420p', // Format boje
+  outputPath // Putanja za izlaznu datoteku
+];
 
-filterComplex += '[1:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player0];';
-filterComplex += '[2:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player1];';
-filterComplex += '[3:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player2];';
-filterComplex += '[4:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player3];';
-filterComplex += '[5:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player4];';
-filterComplex += '[6:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player5];';
-filterComplex += '[7:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player6];';
-filterComplex += '[8:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player7];';
-filterComplex += '[9:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player8];';
-filterComplex += '[10:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player9];';
-filterComplex += '[11:v]scale=iw*0.5:ih*0.5,tpad=stop_mode=clone[player10];';
+// Pokretanje FFmpeg-a
+const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
-filterComplex += '[bg][player0]overlay=1000:800[tmp0];';
-filterComplex += '[tmp0][player1]overlay=400:600[tmp1];';
-filterComplex += '[tmp1][player2]overlay=600:600[tmp2];';
-filterComplex += '[tmp2][player3]overlay=800:600[tmp3];';
-filterComplex += '[tmp3][player4]overlay=1000:600[tmp4];';
-filterComplex += '[tmp4][player5]overlay=500:400[tmp5];';
-filterComplex += '[tmp5][player6]overlay=700:400[tmp6];';
-filterComplex += '[tmp6][player7]overlay=900:400[tmp7];';
-filterComplex += '[tmp7][player8]overlay=400:200[tmp8];';
-filterComplex += '[tmp8][player9]overlay=700:200[tmp9];';
-filterComplex += '[tmp9][player10]overlay=1000:200[outv]';
+// Praćenje izlaza iz FFmpeg-a
+ffmpeg.stdout.on('data', (data) => {
+  console.log('FFmpeg stdout:', data.toString());
+});
 
-const ffmpegCommand = `ffmpeg -y ${inputs.join(' ')} -filter_complex "${filterComplex}" -map "[outv]" -map 0:a? -c:a copy -pix_fmt yuv420p -c:v libx264 -shortest "${outputPath}"`.replace(/\n/g,' ');
+ffmpeg.stderr.on('data', (data) => {
+  console.error('FFmpeg stderr:', data.toString());
+});
 
-exec(ffmpegCommand, (error, stdout, stderr) => {
-  if (error) {
-    console.error('FFmpeg error:', error.message);
-    console.error(stderr);
-    return;
+// Provjera kada proces završi
+ffmpeg.on('close', (code) => {
+  if (code === 0) {
+    console.log('✅ Video je uspješno generiran:', outputPath);
+  } else {
+    console.error('❌ FFmpeg je završio s greškom, kod:', code);
   }
-  console.log('Video uspješno generiran s gifovima na 50% veličine:', outputPath);
 });
