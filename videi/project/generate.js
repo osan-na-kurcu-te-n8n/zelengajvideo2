@@ -2,7 +2,6 @@
 
 const { spawn } = require('child_process');
 const fs = require('fs');
-
 // Configuration
 const CONFIG = {
     backgroundVideo: 'assets/background.mp4',
@@ -23,14 +22,11 @@ const CONFIG = {
         { name: 'DIAZ',       x: 1390, y: 220, img: 'assets/photos/rw.png',  start: 6 }
     ]
 };
-
 // Create output directory
 fs.mkdirSync('output', { recursive: true });
-
 // Build FFmpeg filter
 let filter = '[0:v]format=rgba[bg]';
 let v = '[bg]';
-
 CONFIG.players.forEach((player, i) => {
     const imgIn = 1 + i; // Only player image input now
     
@@ -45,11 +41,10 @@ CONFIG.players.forEach((player, i) => {
     filter += `;${v}[ph${i}]overlay=${player.x}:${player.y}[v${i}a]`;
     
     // Add text directly on video (no name box background)
-    filter += `;[v${i}a]drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf':text='${player.name}':fontcolor=white:fontsize=24:x='(${textX}-text_w/2)':y=${textY}:borderw=2:bordercolor=black:enable='between(t\\,${player.start}\\,999)':alpha='if(between(t\\,${player.start}\\,${player.start + CONFIG.fadeInDuration})\\,(t-${player.start})/${CONFIG.fadeInDuration}\\,1)'[v${i}b]`;
+    filter += `;[v${i}a]drawtext=fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf':text='${player.name}':fontcolor=white:fontsize=24:x='(${textX}-text_w/2)':y=${textY}:borderw=2:bordercolor=black:enable='between(t\,${player.start}\,999)':alpha='if(between(t\,${player.start}\,${player.start + CONFIG.fadeInDuration})\,(t-${player.start})/${CONFIG.fadeInDuration}\,1)'[v${i}b]`;
     
     v = `[v${i}b]`;
 });
-
 // FFmpeg arguments - no name box inputs needed
 const args = [
     '-y', '-i', CONFIG.backgroundVideo,
@@ -59,12 +54,10 @@ const args = [
     '-c:v', 'libx264', '-crf', '18',
     CONFIG.outputVideo
 ];
-
 // Run FFmpeg
 console.log('🎬 Generating soccer lineup video...');
 console.log('⚽ Featured players: Liverpool FC starting XI (text overlay only)');
 const ffmpeg = spawn('ffmpeg', args, { stdio: 'inherit' });
-
 ffmpeg.on('close', (code) => {
     if (code === 0) {
         console.log(`✅ Video generated: ${CONFIG.outputVideo}`);
